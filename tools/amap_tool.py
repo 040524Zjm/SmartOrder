@@ -189,8 +189,16 @@ def calculate_distance(
                 'success': False,
                 'message': response['info']
             }
+        # path = response['route']['paths'][0]
+        # duration = path['duration'] if inner_model == 'electrobike' else path['cost']['duration']
         path = response['route']['paths'][0]
-        duration = path['duration'] if inner_model == 'electrobike' else path['cost']['duration']
+        # v5 正确通用解析方式
+        if 'cost' in path:  # 只有 driving 有
+            duration = int(path['cost']['duration'])
+        else:  # walking / electrobike
+            duration = int(path['duration'])
+
+        distance = int(path['distance'])
         return {
                 "distance":int(path["distance"]), # 两点之间距离
                 "duration":duration, # 两点之间某一种路径规划下的时间
@@ -212,16 +220,21 @@ def check_delivery_range(address: str, path_mode_input: PathInputModel =  None) 
     """
     # 1.获取重点坐标
     try:
+        # 1. 使用传入的模式或默认模式
+        if path_mode_input is None:
+            path_mode_input = config.DEFAULT_PATH_MODE
+
+        # 2. 地理编码获取经纬度
         geocode_result = geocode_address(address)
         if not geocode_result['success']:
             return {
                 'status': 'fail',
                 'message': geocode_result['message']
             }
-        # 2.看距离
+        # 3.看距离
         # 起点
-        origin_location = f'{config.MERCHANT_LONGITUDE}, {config.MERCHANT_LATITUDE}'
-        calculate_distance_result = calculate_distance(origin_location, geocode_result['location'], path_mode_input=path_mode_input or config.DEFAULT_PATH_MODE)
+        origin_location = f'{config.MERCHANT_LONGITUDE},{config.MERCHANT_LATITUDE}'
+        calculate_distance_result = calculate_distance(origin_location, geocode_result['location'], path_mode_input=path_mode_input)
         if not calculate_distance_result['success']:
             return {
                 "status": 'fail',
@@ -273,13 +286,13 @@ if __name__ == '__main__':
     print(f"骑行模式距离: {result2['distance']}公里 时间: {result2['duration']}秒 ({minutes}分{round(seconds, 2)}秒)")
     print(f"是否在配送范围内: {result2['message']}")
 
-    # # 测试驾车模式 (3)
-    # print("\n3. 驾车模式测试:")
-    # result3 = check_delivery_range(test_address, "3")
-    # minutes = result3['duration'] // 60
-    # seconds = result3['duration'] % 60
-    # print(f"步行模式距离: {result3['distance']}公里 时间: {result3['duration']}秒 ({minutes}分{round(seconds, 2)}秒)")
-    # print(f"是否在配送范围内: {result3['message']}")
+    # 测试驾车模式 (3)
+    print("\n3. 驾车模式测试:")
+    result3 = check_delivery_range(test_address, "3")
+    minutes = result3['duration'] // 60
+    seconds = result3['duration'] % 60
+    print(f"步行模式距离: {result3['distance']}公里 时间: {result3['duration']}秒 ({minutes}分{round(seconds, 2)}秒)")
+    print(f"是否在配送范围内: {result3['message']}")
 
 
 

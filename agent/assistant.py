@@ -10,9 +10,10 @@ LangChain中Agent组建作用， 根据自然语言选择工具、调用工具
 def 函数描述要准确，模型看
 """
 import logging
-from json import JSONDecodeError
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-from langchain.agents import create_agent
+from json import JSONDecodeError
 from tools.llm_tool import call_llm
 from typing import Dict, Any
 from agent.mcp import general_inquiry, menu_inquiry, delivery_check_tool
@@ -97,7 +98,7 @@ class SmartRestaurantAssistant:
         """基于关键词列表规则 来降级处理"""
         # todo 列表匹配 - 正则匹配 - 语义相似性匹配（嵌入模型：语义在空间距离） - LLM相似性匹配（文本模型） - 经典机器学习算法（泛化弱，提前标准数据）
         """兜底意图分析"""
-        logging.info("使用兜底意图分析")
+        logger.info("使用兜底意图分析")
         # 1.配送相关关键词
         delivery_keywords = ["配送", "送达", "送到", "送货", "外卖", "地址", "区域", "范围"]
         # 2.菜单相关关键词
@@ -146,20 +147,20 @@ class SmartRestaurantAssistant:
         :param user_query:
         :return:
         """
-        logging.info(f'带重试的意图分析')
+        logger.info(f'带重试的意图分析')
         last_error = None
         # 1.重试
         for i in range(self.max_retries): # 0 1 2
             try:
                 llm_response_dict = self._analyze_intention(user_query, last_error)
-                logging.info(f'意图分析成功: {llm_response_dict}')
+                logger.info(f'意图分析成功: {llm_response_dict}')
                 return llm_response_dict
             except(ValueError, JSONDecodeError) as e:
                 last_error =str(e)
-                logging.warning(f'意图分析失败,开始第{i+1}次重试') # 异常吃掉
+                logger.warning(f'意图分析失败,开始第{i+1}次重试') # 异常吃掉
                 if i < self.max_retries - 1:
                     time.sleep(self.backoff)
-        logging.error(f'重试次数已经达到了最大{self.max_retries}')
+        logger.error(f'重试次数已经达到了最大{self.max_retries}')
 
         # 2.走降级
         self._analyse_intention_fallback(user_query)
@@ -186,21 +187,16 @@ class SmartRestaurantAssistant:
     def invoke(self, user_query: str):
         # 和小助手（Agent）聊天
         # 1.分析用户的意图（找工具）
-        structured_tool = self._analyze_intention(user_query)
+        structured_tool = self.analyse_intention_with_retry(user_query)
         # 1.1工具名字
         tool_name = structured_tool['tool_name']
         # 1.2工具参数
-        tool_param = structured_tool['format_tool']
+        tool_param = structured_tool['format_query']
         print(f'工具名字：{tool_name}，工具参数：{tool_param}')
         # 2.调用工具
         tool_result = self.execute_tool(tool_name, tool_param)
         # 3.返回工具结果
         return tool_result
-
-
-
-
-
 
 
 # 全局方法 给service用
@@ -210,7 +206,7 @@ def chat_with_assistant(user_query: str):
         # 1.实例化小助手
         assistant = SmartRestaurantAssistant()
         # 2.调用聊天方法
-        assistant_response = assistant.invoke(user_query)
+        assistant_response = assistant.invoke(user_query or "介绍一下您们餐厅的基本信息")
         print(f'小助手的回复：\n{assistant_response}')
         # 3.返回小助手的结果
         return assistant_response
@@ -222,11 +218,10 @@ def chat_with_assistant(user_query: str):
 
 
 
-
-
-
-
-
-
-
-
+if __name__ == '__main__':
+    print(f'1.常规问题')
+    chat_with_assistant(user_query='你们餐厅的联系方式是什么？')
+    print(f'2.菜品推荐问题对话')
+    chat_with_assistant(user_query='鲁菜系列的菜品')
+    print(f'3.配送范围问题')
+    chat_with_assistant(user_query='海淀区大学能送到吗？')
