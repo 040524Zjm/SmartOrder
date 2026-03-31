@@ -6,9 +6,11 @@ POST / chat
 POST / delivery
 POST / menu / list
 """
+from http.client import HTTPException
+
 from fastapi import FastAPI
 from pydantic import BaseModel # 数据验证
-from typing import List
+from typing import List, Optional
 from tools.amap_tool import PathInputModel
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -37,8 +39,21 @@ class MenuListResponse(BaseModel): # dict - kv -> 对象 （校验，转换）
     count: int # 菜品数量
     message: str # 响应消息
 
+# 定义请求数据类型
+# 定义配送范围查询的请求模型
+class DeliveryRequest(BaseModel):
+    """配送查询请求"""
+    address: str
+    travel_mode: PathInputModel = "2"  # 1=步行, 2=骑电动车, 3=驾车
+
+# 定义对话请求模型
+class ChatRequest(BaseModel):
+    """智能对话请求"""
+    query: str
+
 
 # 响应数据模型
+# 定义配送范围查询响应模型
 class DeliveryResponse(BaseModel):
     """配送查询响应"""
     success: bool  # 成功(True) or 失败的标识（False）
@@ -50,11 +65,50 @@ class DeliveryResponse(BaseModel):
     travel_mode: PathInputModel # 配送模式 (1:步行 2:骑电动车 3:驾车)
     input_address: str # 输入原始内容
 
-class DeliveryRequest(BaseModel):
-    """配送查询请求"""
-    address: str
-    travel_mode: PathInputModel = "2"  # 1=步行, 2=骑电动车, 3=驾车
+# 定义对话响应模型
+class ChatResponse(BaseModel):
+    """智能对话相应"""
+    success: bool
+    query: str
+    response: Optional[str] = None
+    recommendation: Optional[str] = None
+    menu_ids: Optional[List[str]] = None
 
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat_endpoint(request: ChatRequest):
+    """
+    智能对话接口
+
+    接收用户问题，返回智能助手回复
+    """
+    try:
+        # 调用智能对话服务
+        from service.Order_service import smart_chat
+        result = smart_chat(request.query)
+
+        # 处理不同类型的返回值
+        if isinstance(result, dict) and "recommendation" in result and "menu_ids" in result:
+            # 菜品推荐返回
+            return ChatResponse(
+                success=True,
+                query=request.query,
+                recommendation=result["recommendation"],
+                menu_ids=result["menu_ids"]
+            )
+        else:
+            # 普通文本回复
+            return ChatResponse(
+                success=True,
+                query=request.query,
+                response=str(result)
+            )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"智能对话服务失败: {str(e)}"
+        )
 
 
 @app.get('/menu/list', response_model=MenuListResponse)

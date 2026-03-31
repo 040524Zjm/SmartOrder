@@ -23,3 +23,15 @@ def check_delivery_range(address: str, model:PathInputModel):
     return check_delivery_range(address, model)
 
 
+def smart_chat(user_query: str):
+    """
+    对话接口
+    :param user_query: 问题
+    :return:
+    """
+    from agent.assistant import chat_with_assistant
+
+    return chat_with_assistant(user_query)
+
+
+
