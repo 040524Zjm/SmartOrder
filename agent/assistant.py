@@ -9,12 +9,14 @@ LangChain中Agent组建作用， 根据自然语言选择工具、调用工具
 1.找到工具2.调用工具（是否输出后再润色）
 def 函数描述要准确，模型看
 """
+import logging
+from json import JSONDecodeError
 
 from langchain.agents import create_agent
 from tools.llm_tool import call_llm
 from typing import Dict, Any
 from agent.mcp import general_inquiry, menu_inquiry, delivery_check_tool
-
+import time
 import json
 
 
@@ -55,7 +57,9 @@ class SmartRestaurantAssistant:
 
         记住：如果你错误的选择工具，系统将会出现崩溃。
         """
-        pass
+
+        self.max_retries = 3 # 最大重试次数
+        self.backoff = 1 # 间隔
 
         """
         可能的错误：
@@ -73,17 +77,92 @@ class SmartRestaurantAssistant:
 
     def _clean_llm_response(self, llm_response_content: str):
         """清洗LLM输出"""
+        # 1.markdown '```json {}```'
+        if llm_response_content.startswith('```json'):
+            llm_response_content = llm_response_content[7:]
+        if llm_response_content.endswith('```'):
+            llm_response_content = llm_response_content[:-3]
 
-    def _analyze_intention(self, user_query: str) -> Dict[str, Any]:
+        # 2.json嵌套(有效json) '{"tool_name": {"name": "tom"}, "format_query": "营业时间"}'
+        start_index = llm_response_content.find('{') # 左第一个
+        end_index = llm_response_content.rfind('}') # 右第一个
+
+        if start_index != -1 and end_index != -1 and end_index > start_index:
+            clean_response = llm_response_content[start_index:end_index+1]
+            return clean_response
+        raise ValueError(f'不是一个有效的json格式字符串')
+
+
+    def _analyse_intention_fallback(self, user_query: str) -> Dict[str, Any]:
+        """基于关键词列表规则 来降级处理"""
+        # todo 列表匹配 - 正则匹配 - 语义相似性匹配（嵌入模型：语义在空间距离） - LLM相似性匹配（文本模型） - 经典机器学习算法（泛化弱，提前标准数据）
+        """兜底意图分析"""
+        logging.info("使用兜底意图分析")
+        # 1.配送相关关键词
+        delivery_keywords = ["配送", "送达", "送到", "送货", "外卖", "地址", "区域", "范围"]
+        # 2.菜单相关关键词
+        menu_keywords = ["菜单", "菜品", "推荐", "点餐", "招牌", "特色", "什么好吃", "有什么菜"]
+        # 3.常规咨询关键词
+        # general_keywords = ["营业", "时间", "电话", "预约", "预订", "位置", "在哪", "多少钱", "优惠", "活动"]
+        # 检查配送意图
+        if any(keyword in user_query for keyword in delivery_keywords):
+
+            return {"tool_name": "delivery_check_tool", "format_query": user_query}
+
+        # 检查菜单意图
+        elif any(keyword in user_query for keyword in menu_keywords):
+            return {"tool_name": "menu_inquiry", "format_query": user_query}
+
+        # 默认常规咨询
+        else:
+            return {"tool_name": "general_inquiry", "format_query": user_query}
+
+    def _analyze_intention(self, user_query: str, last_error: str) -> Dict[str, Any]:
         """意图分析"""
-        # 1.调用模型
-        llm_response_str = call_llm(user_query, self.instruction)
-        # 2.解析str -> json # 必须得是非常干净的字符串才可以，但llm可能错
-        # 简单清洗
-
-        llm_response_dict = json.loads(llm_response_str)
-        # 3.返回
+        instruction = self.instruction
+        # 1.是有有错
+        if last_error:
+            instruction += f"\n\n上次解析失败，错误信息：{last_error}\n请根据错误信息修正JSON格式，确保返回正确的JSON。"
+        # 2.调用模型
+        llm_response = call_llm(user_query, instruction)
+        # 解析str -> json # 必须得是非常干净的字符串才可以，但llm可能错
+        # 3.简单清洗
+        clean_response = self._clean_llm_response(llm_response)
+        # 4.解析
+        llm_response_dict = json.loads(clean_response)
+        # 5.校验字典key是否有效
+        if not all(key in llm_response_dict for key in ['tool_name', 'format_query']):
+            raise ValueError(f'json格式错误，缺少字段.{llm_response_dict}')
+        # 6.校验工具名是否在工具集中
+        if llm_response_dict['tool_name'] not in self.tools:
+            raise ValueError(f'工具不存在: {llm_response_dict["tool_name"]}')
+        # 7.返回模型结果
         return llm_response_dict
+
+
+    def analyse_intention_with_retry(self, user_query: str) -> Dict[str, Any]:
+        """
+        带重试的意图分析， 以及手动降级
+        :param user_query:
+        :return:
+        """
+        logging.info(f'带重试的意图分析')
+        last_error = None
+        # 1.重试
+        for i in range(self.max_retries): # 0 1 2
+            try:
+                llm_response_dict = self._analyze_intention(user_query, last_error)
+                logging.info(f'意图分析成功: {llm_response_dict}')
+                return llm_response_dict
+            except(ValueError, JSONDecodeError) as e:
+                last_error =str(e)
+                logging.warning(f'意图分析失败,开始第{i+1}次重试') # 异常吃掉
+                if i < self.max_retries - 1:
+                    time.sleep(self.backoff)
+        logging.error(f'重试次数已经达到了最大{self.max_retries}')
+
+        # 2.走降级
+        self._analyse_intention_fallback(user_query)
 
 
     def execute_tool(self, tool_name: str, tool_param: str) -> Dict[str, Any]:
