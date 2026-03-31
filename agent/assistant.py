@@ -11,8 +11,11 @@ def 函数描述要准确，模型看
 """
 
 from langchain.agents import create_agent
+from tools.llm_tool import call_llm
 from typing import Dict, Any
+from agent.mcp import general_inquiry, menu_inquiry, delivery_check_tool
 
+import json
 
 
 
@@ -21,7 +24,9 @@ class SmartRestaurantAssistant:
     def __init__(self):
         # 给Agent封装工具: tools 未来需要封装工具的名字和工具的对象
         self.tools = {
-
+            "general_inquiry": general_inquiry,
+            "menu_inquiry": menu_inquiry,
+            "delivery_check_tool": delivery_check_tool
         }
         self.instruction = """你是一个智能餐厅助手的意图分析器。
         请分析用户问题意图，并且选择最合适的工具来处理：
@@ -66,25 +71,52 @@ class SmartRestaurantAssistant:
         }
         """
 
+    def _clean_llm_response(self, llm_response_content: str):
+        """清洗LLM输出"""
+
     def _analyze_intention(self, user_query: str) -> Dict[str, Any]:
         """意图分析"""
+        # 1.调用模型
+        llm_response_str = call_llm(user_query, self.instruction)
+        # 2.解析str -> json # 必须得是非常干净的字符串才可以，但llm可能错
+        # 简单清洗
+
+        llm_response_dict = json.loads(llm_response_str)
+        # 3.返回
+        return llm_response_dict
 
 
+    def execute_tool(self, tool_name: str, tool_param: str) -> Dict[str, Any]:
+        """执行工具"""
+        try:
+            tool_obj = self.tools[tool_name]
+            if self.tools[tool_name] is None:
+                raise ValueError(f"Invalid tool name: {tool_name},工具不可用")
+            # 调用工具
+            if tool_name == 'general_inquiry':
+                tool_result = tool_obj.invoke({"query": tool_param}) # str
+            elif tool_name == 'menu_inquiry':
+                tool_result = tool_obj.invoke({"query": tool_param}) # str
+            else:
+                tool_result = tool_obj.invoke({"address": tool_param, "travel_mode": "2"}) # Dict 默认用电动车骑行
 
+            return tool_result
+        except Exception as e:
+            raise Exception(f'查询功能不可用，{e}')
 
-
-
-
-
-    def chat(self, user_query: str):
+    def invoke(self, user_query: str):
         # 和小助手（Agent）聊天
         # 1.分析用户的意图（找工具）
         structured_tool = self._analyze_intention(user_query)
-
+        # 1.1工具名字
+        tool_name = structured_tool['tool_name']
+        # 1.2工具参数
+        tool_param = structured_tool['format_tool']
+        print(f'工具名字：{tool_name}，工具参数：{tool_param}')
         # 2.调用工具
-        tool_result = structured_tool.invoke()
-
+        tool_result = self.execute_tool(tool_name, tool_param)
         # 3.返回工具结果
+        return tool_result
 
 
 
@@ -95,13 +127,17 @@ class SmartRestaurantAssistant:
 # 全局方法 给service用
 def chat_with_assistant(user_query: str):
     """智能小助手对话"""
+    try:
+        # 1.实例化小助手
+        assistant = SmartRestaurantAssistant()
+        # 2.调用聊天方法
+        assistant_response = assistant.invoke(user_query)
+        print(f'小助手的回复：\n{assistant_response}')
+        # 3.返回小助手的结果
+        return assistant_response
+    except Exception as e:
+        raise Exception(f'服务内部故障，暂不可用：{e}')
 
-    # 1.实例化小助手
-    assistant = SmartRestaurantAssistant()
-    # 2.调用聊天方法
-    assistant_response = assistant.chat(user_query)
-    print(f'小助手的回复：{assistant_response}')
-    # 3.返回小助手的结果
 
 
 
